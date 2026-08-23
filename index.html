@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>drikus-upscale — AI image upscaling in your browser</title>
+<meta name="description" content="Upscale low-resolution and JPEG-compressed images 4× with Real-ESRGAN. Runs entirely in your browser on WebGPU or WebAssembly — nothing is uploaded.">
+<meta name="color-scheme" content="dark light">
+<link rel="stylesheet" href="assets/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔍</text></svg>">
+<script src="coi-serviceworker.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">⬈</span>
+    <div>
+      <h1>drikus&#8209;upscale</h1>
+      <p class="tagline">Real&#8209;ESRGAN super&#8209;resolution, entirely in your browser.</p>
+    </div>
+  </div>
+  <div class="caps" id="caps" title="Detected compute backend">
+    <span class="chip chip-muted" id="caps-chip">detecting…</span>
+  </div>
+</header>
+
+<main>
+  <!-- ------------------------------------------------ input -->
+  <section id="dropzone" class="dropzone" tabindex="0" aria-label="Add an image">
+    <input type="file" id="file-input" accept="image/*" hidden>
+    <div class="dz-inner">
+      <div class="dz-icon" aria-hidden="true">⬇</div>
+      <p class="dz-title">Drop an image here</p>
+      <p class="dz-sub">or paste with <kbd id="paste-key">Ctrl</kbd><kbd>V</kbd> · <button type="button" class="linkbtn" id="browse">browse your files</button></p>
+      <p class="dz-note">Your image never leaves the device — all processing happens locally.</p>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------ workspace -->
+  <section id="workspace" class="workspace" hidden>
+    <div class="panel controls">
+      <div class="source-summary">
+        <canvas id="thumb" class="thumb" width="96" height="96"></canvas>
+        <div class="source-meta">
+          <strong id="src-name">image.png</strong>
+          <span id="src-dims" class="muted"></span>
+          <button type="button" class="linkbtn" id="change-image">choose a different image</button>
+        </div>
+      </div>
+
+      <label class="field">
+        <span class="field-label">Model</span>
+        <select id="model-select"></select>
+      </label>
+      <p class="model-meta" id="model-meta"></p>
+      <p class="blurb" id="model-blurb"></p>
+      <p class="blurb estimate" id="model-estimate"></p>
+
+      <label class="field">
+        <span class="field-label">Output size</span>
+        <select id="scale-select">
+          <option value="4">4× — native model output</option>
+          <option value="3">3× — resampled from 4×</option>
+          <option value="2" selected>2× — resampled from 4×</option>
+          <option value="1">1× — clean up at original size</option>
+        </select>
+      </label>
+
+      <details class="advanced">
+        <summary>Advanced</summary>
+        <label class="field">
+          <span class="field-label">Backend</span>
+          <select id="backend-select">
+            <option value="auto" selected>Auto</option>
+            <option value="webgpu">WebGPU</option>
+            <option value="wasm">WebAssembly (CPU)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Tile size <span class="muted" id="tile-value"></span></span>
+          <input type="range" id="tile-size" min="64" max="512" step="32" value="192">
+        </label>
+        <label class="field">
+          <span class="field-label">Tile overlap <span class="muted" id="overlap-value"></span></span>
+          <input type="range" id="overlap" min="0" max="48" step="4" value="16">
+        </label>
+        <p class="blurb">Tiles keep memory bounded. Smaller tiles are safer on phones; the overlap is cropped away after inference so seams stay invisible.</p>
+        <button type="button" class="ghost" id="clear-cache">Clear cached model downloads</button>
+      </details>
+
+      <div class="actions">
+        <button type="button" class="primary" id="run">Upscale</button>
+        <button type="button" class="ghost" id="cancel" hidden>Cancel</button>
+      </div>
+
+      <div class="progress" id="progress" hidden>
+        <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+        <p class="status" id="status"></p>
+      </div>
+      <p class="error" id="error" hidden></p>
+    </div>
+
+    <div class="panel preview">
+      <div class="preview-head">
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab active" id="tab-compare" role="tab">Compare</button>
+          <button type="button" class="tab" id="tab-result" role="tab">Result</button>
+        </div>
+        <div class="preview-tools">
+          <span class="muted" id="out-dims"></span>
+          <button type="button" class="ghost" id="download-png" disabled>Download PNG</button>
+          <button type="button" class="ghost" id="download-webp" disabled>WebP</button>
+        </div>
+      </div>
+
+      <div class="stage" id="stage">
+        <div class="compare" id="compare">
+          <canvas id="canvas-before" class="layer"></canvas>
+          <div class="clip" id="clip"><canvas id="canvas-after" class="layer"></canvas></div>
+          <div class="handle" id="handle" role="slider" aria-label="Compare original and upscaled" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"><span></span></div>
+          <span class="tag tag-left">original</span>
+          <span class="tag tag-right">upscaled</span>
+        </div>
+      </div>
+      <p class="hint" id="preview-hint">The upscaled image is painted tile by tile as it is produced. Drag the divider to compare.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <p>
+    Models are <a href="https://github.com/xinntao/Real-ESRGAN">Real&#8209;ESRGAN</a> (BSD&#8209;3&#8209;Clause) exported to ONNX;
+    inference by <a href="https://github.com/microsoft/onnxruntime">ONNX&nbsp;Runtime&nbsp;Web</a> (MIT).
+    No image data is uploaded, and after the first run the app works offline.
+  </p>
+</footer>
+
+<script type="module" src="assets/app.js"></script>
+</body>
+</html>

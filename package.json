@@ -1,0 +1,16 @@
+{
+  "name": "drikus-upscale",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Client-side AI image upscaling with Real-ESRGAN and ONNX Runtime Web",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8099",
+    "test": "node tools/smoke-test.mjs"
+  },
+  "devDependencies": {
+    "onnxruntime-web": "^1.27.0",
+    "playwright": "^1.62.1"
+  }
+}
