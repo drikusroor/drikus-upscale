@@ -15,7 +15,7 @@ const el = {
   barFill: $('bar-fill'), status: $('status'), error: $('error'), capsChip: $('caps-chip'),
   before: $('canvas-before'), after: $('canvas-after'), clip: $('clip'), handle: $('handle'),
   compare: $('compare'), stage: $('stage'), tabCompare: $('tab-compare'), tabResult: $('tab-result'),
-  downloadPng: $('download-png'), downloadWebp: $('download-webp'), outDims: $('out-dims'),
+  downloadPng: $('download-png'), downloadWebp: $('download-webp'), outDims: $('out-dims'), zoomToggle: $('zoom-toggle'),
   previewHint: $('preview-hint'), pasteKey: $('paste-key'),
 };
 
@@ -243,6 +243,8 @@ function resetPreview() {
   el.downloadWebp.disabled = true;
   setCompareMode('compare');
   setSplit(0.5);
+  el.compare.classList.remove('native');
+  el.zoomToggle.textContent = 'Fit ▾';
 }
 
 function sizeCanvases(width, height) {
@@ -514,6 +516,10 @@ el.clearCache.addEventListener('click', () => getWorker().postMessage({ type: 'e
 
 el.tabCompare.addEventListener('click', () => setCompareMode('compare'));
 el.tabResult.addEventListener('click', () => setCompareMode('result'));
+el.zoomToggle.addEventListener('click', () => {
+  const native = el.compare.classList.toggle('native');
+  el.zoomToggle.textContent = native ? '100% ▾' : 'Fit ▾';
+});
 el.downloadPng.addEventListener('click', () => download('image/png', 'png'));
 el.downloadWebp.addEventListener('click', () => download('image/webp', 'webp', 0.95));
 
@@ -525,6 +531,7 @@ const splitFromEvent = (e) => {
 };
 el.compare.addEventListener('pointerdown', (e) => {
   if (el.compare.classList.contains('result-only')) return;
+  e.preventDefault();      // otherwise a fast drag starts a text/image selection instead of moving the handle
   dragging = true;
   el.compare.setPointerCapture(e.pointerId);
   splitFromEvent(e);

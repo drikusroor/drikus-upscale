@@ -184,8 +184,20 @@ button.primary:not(:disabled):hover { filter: brightness(1.08); }
   border: 1px solid var(--line); min-height: 300px;
   display: grid; place-items: center;
 }
-.compare { position: relative; line-height: 0; max-width: 100%; }
+.compare {
+  position: relative; line-height: 0; max-width: 100%;
+  user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
 .compare canvas { display: block; max-width: 100%; height: auto; image-rendering: auto; }
+/*
+ * "Fit" mode (default) scales the canvas down to the panel width — which
+ * also scales down the very detail an upscale just added, so two runs can
+ * look deceptively similar at a glance. "100%" drops the constraint so the
+ * stage's own scrollbars take over and every pixel is shown 1:1.
+ */
+.compare.native canvas { max-width: none; }
+.compare.native { max-width: none; }
 .layer { }
 .clip { position: absolute; inset: 0; clip-path: inset(0 50% 0 0); }
 .clip canvas { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; }
