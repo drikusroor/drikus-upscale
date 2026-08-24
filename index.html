@@ -85,7 +85,7 @@
           <span class="field-label">Tile overlap <span class="muted" id="overlap-value"></span></span>
           <input type="range" id="overlap" min="0" max="48" step="4" value="16">
         </label>
-        <p class="blurb">Tiles keep memory bounded. Smaller tiles are safer on phones; the overlap is cropped away after inference so seams stay invisible.</p>
+        <p class="blurb" id="tile-blurb">Tiles keep memory bounded. Smaller tiles are safer on phones; the overlap is cropped away after inference so seams stay invisible.</p>
         <button type="button" class="ghost" id="clear-cache">Clear cached model downloads</button>
       </details>
 
@@ -131,7 +131,8 @@
 
 <footer class="footer">
   <p>
-    Models are <a href="https://github.com/xinntao/Real-ESRGAN">Real&#8209;ESRGAN</a> (BSD&#8209;3&#8209;Clause) exported to ONNX;
+    Models are <a href="https://github.com/xinntao/Real-ESRGAN">Real&#8209;ESRGAN</a> (BSD&#8209;3&#8209;Clause) and
+    <a href="https://github.com/mv-lab/swin2sr">Swin2SR</a> (Apache&#8209;2.0), exported to ONNX;
     inference by <a href="https://github.com/microsoft/onnxruntime">ONNX&nbsp;Runtime&nbsp;Web</a> (MIT).
     No image data is uploaded, and after the first run the app works offline.
   </p>

@@ -1,9 +1,10 @@
 # drikus-upscale
 
 AI image upscaling that runs entirely in the browser. Drop in a small or
-JPEG-mangled picture, pick a model, and [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)
-reconstructs it at 4× on your GPU (WebGPU) or CPU (WebAssembly SIMD + threads).
-Nothing is uploaded — there is no server side.
+JPEG-mangled picture, pick a model — [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)
+or [Swin2SR](https://github.com/mv-lab/swin2sr) — and it reconstructs the image
+at 4× on your GPU (WebGPU) or CPU (WebAssembly SIMD + threads). Nothing is
+uploaded — there is no server side.
 
 **→ https://drikusroor.github.io/drikus-upscale/**
 
@@ -11,7 +12,7 @@ Nothing is uploaded — there is no server side.
 
 - **Three ways in**: drag and drop anywhere on the page, paste with <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd>,
   or the regular file picker. Pasting an image URL works too when the host allows cross-origin reads.
-- **Six models** to choose from, with a recommended default (see below).
+- **Seven models** to choose from, with a recommended default (see below).
 - **WebGPU when available, WASM otherwise**, decided automatically and overridable.
   If WebGPU fails to compile a model, the app falls back to WASM by itself.
 - **Tiled inference in a worker**, so the UI stays responsive, memory stays bounded
@@ -22,9 +23,12 @@ Nothing is uploaded — there is no server side.
 
 ## Models
 
-All six are exported from the official Real-ESRGAN checkpoints to ONNX with fully
-dynamic input shapes. Every one of them outputs 4×; the "output size" selector
-resamples that down when you want 3×, 2× or a same-size cleanup.
+Six are exported from the official Real-ESRGAN checkpoints; the seventh is
+[Swin2SR](https://github.com/mv-lab/swin2sr) — a Swin transformer trained
+specifically for compressed/JPEG-degraded inputs, a genuinely different
+architecture from the GAN-based Real-ESRGAN family with different failure
+modes. All output 4×; the "output size" selector resamples that down when you
+want 3×, 2× or a same-size cleanup.
 
 | Model | Size | Relative cost | Good for |
 |---|---|---|---|
@@ -34,10 +38,20 @@ resamples that down when you want 3×, 2× or a same-size cleanup.
 | Anime video ×4 — fast | 2.5 MB | 0.5× | Anime, flat-shaded art; the quickest option |
 | Anime / art ×4 — 6B | 17.9 MB | 8× | Illustrations, manga scans, sprites |
 | Photo ×4 — x4plus (heavy) | 67.1 MB | 30× | Best photo restoration, if you can wait |
+| Photo ×4 — Swin2SR compressed (slowest) | 57.1 MB | 28× | JPEG artefacts the Real-ESRGAN models still leave visible |
 
 The three "General" entries are the same `realesr-general-x4v3` network: the plain
 weights, the WDN (denoise) weights, and — for the default — a 50/50 deep network
 interpolation of the two, which is what `--denoise_strength 0.5` produces upstream.
+
+Swin2SR is architecturally different in a way that matters for tiling: its
+window-attention blocks bake an attention mask into the ONNX graph as a
+constant, computed for one exact input resolution at export time. Feeding any
+other resolution at inference would silently produce the wrong mask rather
+than error, so — unlike the six CNN-based models, which tolerate any tile size
+— it's exported for one fixed 96 px tile (128 px including its 16 px context
+border), and the app locks the tile-size and overlap sliders to match whenever
+it's selected. `tools/swin2sr/export.py` documents and reproduces the export.
 
 ### Rough speed
 
@@ -91,9 +105,11 @@ assets/app.js              UI, image input, tiling preview, compare slider
 assets/worker.js           ONNX Runtime Web, model cache, tiled inference
 assets/models.js           model catalogue shared by both
 coi-serviceworker.js       COOP/COEP shim for WASM threads
-models/*.onnx              exported Real-ESRGAN weights (committed, served same-origin)
+models/*.onnx              exported model weights (committed, served same-origin)
 vendor/ort/                onnxruntime-web 1.27 runtime + WASM binary
-tools/export_onnx.py       regenerates models/ from the upstream .pth checkpoints
+tools/export_onnx.py       regenerates the Real-ESRGAN models/ from the upstream .pth checkpoints
+tools/swin2sr/export.py    regenerates the Swin2SR model from its upstream checkpoint
+tools/swin2sr/vendor/      the upstream Swin2SR architecture file + a minimal timm shim
 tools/smoke-test.mjs       headless end-to-end test
 ```
 
@@ -120,6 +136,19 @@ The script re-implements SRVGGNetCompact and RRDBNet directly and loads the
 checkpoints with `strict=True`, so a mismatch fails loudly instead of silently
 producing garbage.
 
+### Regenerating the Swin2SR model
+
+```sh
+mkdir -p weights && cd weights
+curl -LO https://github.com/mv-lab/swin2sr/releases/download/v0.0.1/Swin2SR_CompressedSR_X4_48.pth
+cd .. && python tools/swin2sr/export.py
+```
+
+Unlike the script above, this one uses the actual upstream architecture file
+(`tools/swin2sr/vendor/network_swin2sr.py`, unmodified) rather than a
+reimplementation, and traces a fixed input shape rather than a dynamic one —
+see the module docstring in `export.py` for why that's required here.
+
 ### Running the smoke test
 
 ```sh
@@ -137,7 +166,8 @@ repository as-is to GitHub Pages. The workflow enables Pages on first run.
 
 ## Credits and licences
 
-- Model weights: [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) by Xintao Wang et al., BSD-3-Clause.
+- Model weights: [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) by Xintao Wang et al., BSD-3-Clause,
+  and [Swin2SR](https://github.com/mv-lab/swin2sr) by Conde, Choi, Burchi and Timofte, Apache-2.0.
   The `.onnx` files here are format conversions of those published checkpoints.
 - Inference: [ONNX Runtime Web](https://github.com/microsoft/onnxruntime), MIT.
 - Everything else in this repository: MIT.

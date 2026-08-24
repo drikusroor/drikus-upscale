@@ -53,7 +53,7 @@ const check = (name, ok, detail) => {
   if (!ok) failures.push(name);
 };
 
-async function runCase({ fixture, model, scale, tile, label, expect }) {
+async function runCase({ fixture, model, scale, tile, label, expect, expectLockedTile }) {
   console.log(`\n${label}`);
   await page.setInputFiles('#file-input', path.join(FIXTURES, fixture));
   await page.waitForSelector('#workspace:not([hidden])');
@@ -65,6 +65,12 @@ async function runCase({ fixture, model, scale, tile, label, expect }) {
     slider.dispatchEvent(new Event('input'));
     slider.dispatchEvent(new Event('change'));
   }, tile);
+
+  if (expectLockedTile) {
+    const locked = await page.evaluate(() => document.getElementById('tile-size').disabled
+      && document.getElementById('overlap').disabled);
+    check(`${label}: tile/overlap sliders locked for a fixed-tile model`, locked);
+  }
 
   const started = Date.now();
   await page.click('#run');
@@ -128,6 +134,14 @@ await runCase({
 await runCase({
   fixture: 'lowres-160x120.jpg', model: 'realesrgan-x4plus', scale: '1', tile: 160,
   label: 'x4plus heavy, 1× cleanup', expect: { width: 160, height: 120 },
+});
+await runCase({
+  // The tile size passed here only drives this test's own seam-period math --
+  // the model's fixedTile (96) governs what the worker actually sends, and the
+  // UI sliders are locked to it regardless of what we set them to.
+  fixture: 'lowres-160x120.jpg', model: 'swin2sr-compressed-x4', scale: '4', tile: 96,
+  label: 'swin2sr compressed, fixed-tile transformer', expect: { width: 640, height: 480 },
+  expectLockedTile: true,
 });
 
 await browser.close();

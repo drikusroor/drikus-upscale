@@ -216,8 +216,20 @@ async function run(request) {
   // extractTile clamps out-of-bounds reads to the border pixel, so the model
   // always sees `tile + 2 * pad` square input. That keeps WebGPU from
   // recompiling shaders for the ragged right and bottom edges.
-  const tile = Math.max(32, Math.min(tileSize, 1024, Math.max(width, height)));
-  const pad = Math.max(0, Math.min(overlap, 64));
+  //
+  // A model with fixedTile/fixedContextPad (Swin2SR) was exported at one exact
+  // input resolution -- its attention mask is baked in as a constant for that
+  // shape at trace time (see tools/swin2sr/export.py), so any other shape would
+  // silently produce a wrong mask rather than fail loudly. The tile/overlap
+  // sliders are locked in the UI for such a model, but the worker enforces it
+  // independently of what the request happens to carry.
+  const fixedModel = modelById(modelId);
+  const tile = fixedModel.fixedTile
+    ? fixedModel.fixedTile
+    : Math.max(32, Math.min(tileSize, 1024, Math.max(width, height)));
+  const pad = fixedModel.fixedTile
+    ? fixedModel.fixedContextPad
+    : Math.max(0, Math.min(overlap, 64));
   const inW = tile + pad * 2;
   const inH = tile + pad * 2;
   const shape = [1, 3, inH, inW];

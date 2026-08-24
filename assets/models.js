@@ -56,6 +56,23 @@ export const MODELS = [
     cost: 30,
     blurb: 'The full 23-block Real-ESRGAN. Strongest artefact removal and detail synthesis on real photos — and roughly 30× the compute of the general model.',
   },
+  {
+    id: 'swin2sr-compressed-x4',
+    name: 'Photo ×4 — Swin2SR compressed (slowest)',
+    file: 'models/swin2sr-compressed-x4.onnx',
+    bytes: 57149816,
+    scale: 4,
+    cost: 28,
+    // Window attention over the whole tile still benefits from some overlap
+    // to hide seams between tiles inferred independently of one another, but
+    // needs far less than the CNNs above (see worker.js). The exported graph
+    // is traced at this exact size (input tile + 2*contextPad on each side);
+    // any other shape would silently produce an incorrect attention mask, so
+    // the worker forces this tile geometry and the UI locks the sliders.
+    fixedTile: 96,
+    fixedContextPad: 16,
+    blurb: 'A Swin transformer trained specifically on compressed/JPEG-degraded inputs (Conde & Choi et al., 2022) rather than a GAN. Different failure modes than the Real-ESRGAN models above — worth trying when they still look artefact-y.',
+  },
 ];
 
 export const DEFAULT_MODEL_ID = MODELS.find((m) => m.recommended).id;

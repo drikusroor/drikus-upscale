@@ -11,6 +11,7 @@ const el = {
   changeImage: $('change-image'), modelSelect: $('model-select'), modelBlurb: $('model-blurb'), modelMeta: $('model-meta'),
   modelEstimate: $('model-estimate'), scaleSelect: $('scale-select'), backendSelect: $('backend-select'),
   tileSize: $('tile-size'), tileValue: $('tile-value'), overlap: $('overlap'), overlapValue: $('overlap-value'),
+  tileBlurb: $('tile-blurb'),
   clearCache: $('clear-cache'), run: $('run'), cancel: $('cancel'), progress: $('progress'),
   barFill: $('bar-fill'), status: $('status'), error: $('error'), capsChip: $('caps-chip'),
   before: $('canvas-before'), after: $('canvas-after'), clip: $('clip'), handle: $('handle'),
@@ -97,7 +98,29 @@ function describeModel() {
   }
   el.modelMeta.append(document.createTextNode(`${model.scale}× · ${formatBytes(model.bytes)}`));
   el.modelBlurb.textContent = model.blurb;
+  updateTileControls(model);
   updateEstimate();
+}
+
+/**
+ * Most models tolerate any tile size the user picks. Swin2SR was exported at
+ * one exact input resolution -- its attention mask is baked in for that shape,
+ * so the sliders are locked to it here rather than left free to produce a
+ * silently wrong result at any other tile size (see worker.js).
+ */
+function updateTileControls(model) {
+  const locked = Boolean(model.fixedTile);
+  el.tileSize.disabled = locked;
+  el.overlap.disabled = locked;
+  if (locked) {
+    el.tileValue.textContent = `${model.fixedTile} px (fixed)`;
+    el.overlapValue.textContent = `${model.fixedContextPad} px (fixed)`;
+    el.tileBlurb.textContent = 'This model was exported at one fixed tile size, so it ignores the sliders above.';
+  } else {
+    el.tileValue.textContent = `${el.tileSize.value} px`;
+    el.overlapValue.textContent = `${el.overlap.value} px`;
+    el.tileBlurb.textContent = 'Tiles keep memory bounded. Smaller tiles are safer on phones; the overlap is cropped away after inference so seams stay invisible.';
+  }
 }
 
 /** Which backend a run would actually use, given the picker and the hardware. */
