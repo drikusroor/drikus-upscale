@@ -79,33 +79,57 @@ async function readModelBytes(model) {
   return bytes;
 }
 
-async function getSession(modelId, preferred) {
+function releaseSession(modelId) {
+  const entry = sessions.get(modelId);
+  try { entry?.session?.release?.(); } catch { /* already torn down */ }
+  sessions.delete(modelId);
+}
+
+async function createSession(model, backend) {
+  log(`Compiling ${model.name} for ${backend.toUpperCase()}…`);
+  const bytes = await readModelBytes(model);
+  const options = { executionProviders: [backend], graphOptimizationLevel: 'all' };
+  if (backend === 'webgpu') {
+    // Belt and braces against "Shape mismatch attempting to re-use buffer":
+    // the models no longer claim their output is input-sized (see
+    // tools/export_onnx.py), but WebGPU's buffer planner is the strict one, so
+    // it also gets the pattern planner switched off. WASM is left on its
+    // defaults — measurably faster there, and it never had the problem.
+    options.enableMemPattern = false;
+  }
+  return ort.InferenceSession.create(bytes, options);
+}
+
+/**
+ * Get a session for one model at one fixed input shape.
+ *
+ * `shapeKey` pins the tile shape a session was built for, so changing the tile
+ * size rebuilds rather than reusing a session whose buffer plan was laid out
+ * for the old shape.
+ */
+async function getSession(modelId, preferred, shapeKey) {
   const cached = sessions.get(modelId);
-  if (cached && (preferred === 'auto' || cached.backend === preferred)) return cached;
+  if (cached && cached.shapeKey === shapeKey && (preferred === 'auto' || cached.backend === preferred)) {
+    return cached;
+  }
 
   const model = modelById(modelId);
   const caps = await detectBackends();
   const wanted = preferred === 'auto' ? (caps.webgpu ? 'webgpu' : 'wasm') : preferred;
-
   ort.env.wasm.numThreads = caps.threads;
-  const bytes = await readModelBytes(model);
 
   const attempts = wanted === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
   let lastError = null;
   for (const backend of attempts) {
     try {
-      log(`Compiling ${model.name} for ${backend.toUpperCase()}…`);
-      const session = await ort.InferenceSession.create(bytes, {
-        executionProviders: [backend],
-        graphOptimizationLevel: 'all',
-      });
-      const entry = { session, backend, scale: model.scale };
-      sessions.get(modelId)?.session?.release?.();
+      const session = await createSession(model, backend);
+      releaseSession(modelId);
+      const entry = { session, backend, shapeKey, scale: model.scale, modelId };
       sessions.set(modelId, entry);
       return entry;
     } catch (err) {
       lastError = err;
-      if (backend === 'webgpu') log(`WebGPU could not run this model (${err.message}); falling back to WASM.`, 'warn');
+      if (backend === 'webgpu') log(`WebGPU could not load this model (${err.message}); falling back to WASM.`, 'warn');
     }
   }
   throw lastError || new Error('no execution provider could load the model');
@@ -113,12 +137,38 @@ async function getSession(modelId, preferred) {
 
 /* ---------- inference ---------- */
 
-async function warmup(entry, tile) {
-  const size = Math.min(tile, 64);
-  const input = new ort.Tensor('float32', new Float32Array(3 * size * size), [1, 3, size, size]);
-  const out = await entry.session.run({ input });
-  out.output?.dispose?.();
-  input.dispose?.();
+const isBufferShapeError = (err) => /re-?use buffer|shape mismatch/i.test(err?.message || '');
+
+/**
+ * Run one tile, recovering from the WebGPU buffer-reuse failure mode: first by
+ * rebuilding the session on the same backend, then by dropping to WASM for the
+ * rest of the job rather than leaving the user with a dead end.
+ */
+async function infer(job, data, shape) {
+  for (let attempt = 0; ; attempt++) {
+    const input = new ort.Tensor('float32', data, shape);
+    try {
+      return await job.entry.session.run({ input });
+    } catch (err) {
+      const shapeError = isBufferShapeError(err);
+      // A buffer-shape error is worth one rebuild on the same backend; anything
+      // else that WebGPU throws goes straight to WASM. Either way the user ends
+      // up with a finished image instead of a dead end.
+      if (attempt >= 2 || !(shapeError || job.entry.backend === 'webgpu')) throw err;
+      const backend = attempt === 0 && shapeError ? job.entry.backend : 'wasm';
+      log(backend === job.entry.backend
+        ? `Rebuilding the ${backend.toUpperCase()} session after a buffer-shape error…`
+        : `WebGPU could not run this model (${err.message}); finishing on WASM.`, 'warn');
+      releaseSession(job.modelId);
+      const model = modelById(job.modelId);
+      const session = await createSession(model, backend);
+      job.entry = { session, backend, shapeKey: job.shapeKey, scale: model.scale, modelId: job.modelId };
+      sessions.set(job.modelId, job.entry);
+      post({ type: 'ready', backend, scale: model.scale, caps: await detectBackends() });
+    } finally {
+      input.dispose?.();
+    }
+  }
 }
 
 /** Pull an RGB tile out of the source RGBA buffer, clamping at the edges. */
@@ -157,14 +207,10 @@ function packTile(out, outW, outH, cropX, cropY, cropW, cropH) {
   return rgba;
 }
 
-async function run(job) {
+async function run(request) {
   cancelled = false;
-  const { pixels, width, height, modelId, backend: preferred, tileSize, overlap } = job;
+  const { pixels, width, height, modelId, backend: preferred, tileSize, overlap } = request;
   const src = new Uint8ClampedArray(pixels);
-
-  const entry = await getSession(modelId, preferred);
-  const scale = entry.scale;
-  post({ type: 'ready', backend: entry.backend, scale, caps: await detectBackends() });
 
   // Every tile is inferred at exactly the same tensor shape, edges included:
   // extractTile clamps out-of-bounds reads to the border pixel, so the model
@@ -174,14 +220,28 @@ async function run(job) {
   const pad = Math.max(0, Math.min(overlap, 64));
   const inW = tile + pad * 2;
   const inH = tile + pad * 2;
+  const shape = [1, 3, inH, inW];
+  const shapeKey = `${inW}x${inH}`;
   const cols = Math.ceil(width / tile);
   const rows = Math.ceil(height / tile);
   const total = cols * rows;
 
-  await warmup(entry, tile);
+  const job = { modelId, shapeKey, entry: await getSession(modelId, preferred, shapeKey) };
+  const scale = job.entry.scale;
+  post({ type: 'ready', backend: job.entry.backend, scale, caps: await detectBackends() });
+
+  // WebGPU compiles its compute pipelines lazily, so a throwaway pass at the
+  // exact tile shape removes a stall from the first real tile. It has to be the
+  // exact shape: a differently shaped warmup is itself the kind of shape change
+  // that upsets WebGPU's buffer planner. WASM has nothing to precompile and
+  // measured slightly faster without it, so it skips straight to the tiles.
+  if (job.entry.backend === 'webgpu') {
+    const warm = await infer(job, new Float32Array(3 * inW * inH), shape);
+    warm.output?.dispose?.();
+  }
   if (cancelled) return post({ type: 'cancelled' });
 
-  post({ type: 'start', total, outWidth: width * scale, outHeight: height * scale, backend: entry.backend });
+  post({ type: 'start', total, outWidth: width * scale, outHeight: height * scale, backend: job.entry.backend });
 
   let done = 0;
   for (let row = 0; row < rows; row++) {
@@ -194,13 +254,7 @@ async function run(job) {
       const th = Math.min(tile, height - ty);
 
       const data = extractTile(src, width, height, tx - pad, ty - pad, inW, inH);
-      const input = new ort.Tensor('float32', data, [1, 3, inH, inW]);
-      let result;
-      try {
-        result = await entry.session.run({ input });
-      } finally {
-        input.dispose?.();
-      }
+      const result = await infer(job, data, shape);
       const out = result.output.data;
       const outW = inW * scale;
       const outH = inH * scale;

@@ -61,6 +61,17 @@ image → ImageBitmap → RGB Float32 NCHW → [tile + overlap] → ONNX Runtime
 - **Uniform tensor shapes.** Edge tiles are not ragged: out-of-bounds reads clamp to
   the border pixel so every tile is inferred at exactly the same shape. That stops
   WebGPU from recompiling shaders for the right and bottom edges.
+- **Distinct output dim params.** The exported graphs name the output axes
+  `height_out`/`width_out`, *not* `height`/`width`. A repeated `dim_param` in ONNX is
+  an assertion that the two axes are equal, so reusing the input's names claims a
+  4×-larger output is the same size as its input. ONNX Runtime's allocation planner
+  believes it, aliases the output onto the input buffer, and fails at run time with
+  `Shape mismatch attempting to re-use buffer` — on WebGPU, where the planner is
+  strict. The graphs also end in a `Clip` to [0, 1], which keeps the output a
+  distinct tensor from the input as well as bounding the values.
+- **Backend recovery.** If WebGPU still throws mid-run, the worker rebuilds the
+  session once and then finishes the job on WASM rather than leaving a dead end.
+  Sessions are pinned to one tile shape and rebuilt when it changes.
 - **Alpha.** Real-ESRGAN is a 3-channel network. If the source has transparency, the
   alpha plane is upscaled separately with high-quality canvas resampling and
   recomposited onto the model's RGB output.

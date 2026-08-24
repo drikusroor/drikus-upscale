@@ -29,7 +29,8 @@ class SRVGGNetCompact(nn.Module):
         for layer in self.body:
             out = layer(out)
         out = self.upsampler(out)
-        return out + F.interpolate(x, scale_factor=self.upscale, mode='nearest')
+        out = out + F.interpolate(x, scale_factor=self.upscale, mode='nearest')
+        return torch.clamp(out, 0.0, 1.0)
 
 
 class ResidualDenseBlock(nn.Module):
@@ -91,7 +92,7 @@ class RRDBNet(nn.Module):
         feat = feat + self.conv_body(self.body(feat))
         feat = self.lrelu(self.conv_up1(F.interpolate(feat, scale_factor=2, mode='nearest')))
         feat = self.lrelu(self.conv_up2(F.interpolate(feat, scale_factor=2, mode='nearest')))
-        return self.conv_last(self.lrelu(self.conv_hr(feat)))
+        return torch.clamp(self.conv_last(self.lrelu(self.conv_hr(feat))), 0.0, 1.0)
 
 
 def load_state(path):
@@ -161,8 +162,14 @@ def main():
             model, dummy, dest,
             export_params=True, opset_version=args.opset, do_constant_folding=True,
             input_names=['input'], output_names=['output'],
+            # The output dims MUST NOT reuse the input's dim_param names. ONNX
+            # treats a repeated dim_param as an assertion that the two sizes are
+            # equal, so naming both 'height' tells the runtime that a 4x-larger
+            # output is the same size as its input. ONNX Runtime's allocation
+            # planner then aliases the output onto the input buffer and fails at
+            # run time with "Shape mismatch attempting to re-use buffer".
             dynamic_axes={'input': {0: 'batch', 2: 'height', 3: 'width'},
-                          'output': {0: 'batch', 2: 'height', 3: 'width'}},
+                          'output': {0: 'batch', 2: 'height_out', 3: 'width_out'}},
             dynamo=False)
         size = os.path.getsize(dest) / 1e6
         print(f'    wrote {dest} ({size:.1f} MB)', flush=True)

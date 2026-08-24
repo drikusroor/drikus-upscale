@@ -336,6 +336,8 @@ function onWorkerMessage(msg) {
       break;
     }
     case 'ready':
+      // Also fires mid-run if the worker has to switch backends.
+      state.backendUsed = msg.backend;
       updateCapsChip(msg.caps);
       break;
     case 'start':
