@@ -1,3 +1,6 @@
 node_modules/
 .DS_Store
 *.log
+weights/
+tools/.scratch/
+__pycache__/
