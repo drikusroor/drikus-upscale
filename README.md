@@ -1,10 +1,18 @@
 # drikus-upscale
 
-AI image upscaling that runs entirely in the browser. Drop in a small or
-JPEG-mangled picture, pick a model — [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)
-or [Swin2SR](https://github.com/mv-lab/swin2sr) — and it reconstructs the image
-at 4× on your GPU (WebGPU) or CPU (WebAssembly SIMD + threads). Nothing is
-uploaded — there is no server side.
+AI image tools that run entirely in the browser, on your GPU (WebGPU) or CPU
+(WebAssembly SIMD + threads). Nothing is uploaded — there is no server side.
+
+- **Upscale** — drop in a small or JPEG-mangled picture, pick a model —
+  [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) or
+  [Swin2SR](https://github.com/mv-lab/swin2sr) — and it reconstructs the image at 4×.
+- **Remove background** — an automatic cutout with a true soft alpha (hair, fur,
+  motion blur) and colour-decontaminated edges, from
+  [BiRefNet](https://github.com/ZhengPeng7/BiRefNet) or [U²-Net](https://github.com/xuebinqin/U-2-Net).
+
+The tools share one input, preview and download flow, and chain: *Use as input*
+feeds any result back in, so you can cut out a subject and then upscale it, or
+the other way round.
 
 **→ https://drikusroor.github.io/drikus-upscale/**
 
@@ -12,7 +20,7 @@ uploaded — there is no server side.
 
 - **Three ways in**: drag and drop anywhere on the page, paste with <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd>,
   or the regular file picker. Pasting an image URL works too when the host allows cross-origin reads.
-- **Seven models** to choose from, with a recommended default (see below).
+- **A tool switch** (<kbd>U</kbd> / <kbd>R</kbd>), each tool with its own models and a recommended default (see below).
 - **WebGPU when available, WASM otherwise**, decided automatically and overridable.
   If WebGPU fails to compile a model, the app falls back to WASM by itself.
 - **Tiled inference in a worker**, so the UI stays responsive, memory stays bounded
@@ -22,6 +30,8 @@ uploaded — there is no server side.
   are instant and the app works offline.
 
 ## Models
+
+### Upscaling
 
 Six are exported from the official Real-ESRGAN checkpoints; the seventh is
 [Swin2SR](https://github.com/mv-lab/swin2sr) — a Swin transformer trained
@@ -53,13 +63,57 @@ than error, so — unlike the six CNN-based models, which tolerate any tile size
 border), and the app locks the tile-size and overlap sliders to match whenever
 it's selected. `tools/swin2sr/export.py` documents and reproduces the export.
 
-### Rough speed
+### Rough upscaling speed
 
 Time scales with input megapixels × the model's relative cost. On a 4-thread
 WebAssembly build in CI, the general model does ~0.03 cost-weighted Mpx/s;
 WebGPU is typically an order of magnitude faster. The app measures its own
 throughput after each run and uses that for subsequent estimates, so the
 "about N s" line gets accurate quickly.
+
+### Background removal
+
+| Model | Download | Input | Good for |
+|---|---|---|---|
+| **BiRefNet lite** *(default)* | 92 MB fp16 on WebGPU with `shader-f16`, otherwise 182 MB fp32 | 1024² | Clean edges on hair, fur and fine structure |
+| U²-Netp — fast | 4.6 MB | 320² | Near-instant on any device; softer edges. Also the instant preview while BiRefNet runs, once cached |
+
+The worker picks the weights from the device, not the user: fp16 on WebGPU
+adapters with `shader-f16` (the capability chip shows *WebGPU · f16*), fp32 split
+into two external-data shards everywhere else. Excluded on purpose: BRIA RMBG
+(non-commercial weights), full BiRefNet (Swin-L, 444 MB in fp16) and any hosted
+API.
+
+After segmentation, everything runs at full resolution in the worker and
+re-runs live (debounced, no model work) when a control moves:
+
+```
+image → 1024² squash → BiRefNet → S×S alpha ─┬→ IndexedDB mask cache
+                                             └→ bilinear ↑ W×H · source α · threshold
+                                                → colour guided filter (RGB guide, r, ε = 1e-3)
+                                                → blur-fusion decontamination (r = 90, then 6)
+                                                → RGBA strips → canvas
+```
+
+- **Edge softness** is the guided-filter radius (2–32 px). The guide is the full
+  RGB image rather than luminance: it separates hair from a background of
+  similar brightness, which on the green-screen fixture cuts edge-band alpha
+  error by about a quarter. **Edge cleanup** is
+  Forte & Pitié's blur-fusion foreground estimation, which removes background
+  colour bleeding into hair and soft edges; **alpha threshold** cuts faint haze.
+- **Strips.** Post-processing runs in horizontal strips with a margin equal to
+  the sum of every downstream blur radius, so each strip matches a whole-image
+  pass while memory stays bounded at any size — including 16384 px inputs
+  chained from an upscale. Box filters use running sums: cost is O(pixels)
+  whatever the radius.
+- **Cache.** The raw mask is cached in IndexedDB, keyed by a SHA-256 of the
+  decoded pixels plus model, variant and the exported graph's hash. The same
+  image again — pasted or dropped — skips download, compile and inference
+  entirely. LRU-evicted at 100 MB / 200 entries; "Clear cache" clears it.
+- **Source alpha.** A source that is already transparent stays transparent: the
+  predicted alpha is multiplied by it.
+- **Output.** Transparent PNG/WebP (`_nobg`), the mask alone as an 8-bit
+  greyscale PNG (`_mask`), or composited onto a solid colour.
 
 ## How it works
 
@@ -101,15 +155,21 @@ image → ImageBitmap → RGB Float32 NCHW → [tile + overlap] → ONNX Runtime
 ```
 index.html                 markup
 assets/app.css             styles
-assets/app.js              UI, image input, tiling preview, compare slider
-assets/worker.js           ONNX Runtime Web, model cache, tiled inference
-assets/models.js           model catalogue shared by both
+assets/app.js              UI, tool switch, image input, preview, compare slider, chaining
+assets/worker.js           ONNX Runtime Web, model cache, tiled upscaling, segmentation
+assets/matting.js          full-res mask refinement + decontamination, in strips
+assets/mask-cache.js       IndexedDB cache of raw segmentation masks
+assets/png.js              8-bit greyscale PNG encoder for mask downloads
+assets/models.js           tool and model catalogue shared by both
 coi-serviceworker.js       COOP/COEP shim for WASM threads
 models/*.onnx              exported model weights (committed, served same-origin)
 vendor/ort/                onnxruntime-web 1.27 runtime + WASM binary
 tools/export_onnx.py       regenerates the Real-ESRGAN models/ from the upstream .pth checkpoints
 tools/swin2sr/export.py    regenerates the Swin2SR model from its upstream checkpoint
 tools/swin2sr/vendor/      the upstream Swin2SR architecture file + a minimal timm shim
+tools/bgremove/export.py   regenerates the background-removal models from their checkpoints
+tools/bgremove/vendor/     upstream BiRefNet and U-2-Net architecture files + small shims
+tools/fixtures/            test images; make_bgremove_fixtures.py generates the cutout ones
 tools/smoke-test.mjs       headless end-to-end test
 ```
 
@@ -149,6 +209,32 @@ Unlike the script above, this one uses the actual upstream architecture file
 reimplementation, and traces a fixed input shape rather than a dynamic one —
 see the module docstring in `export.py` for why that's required here.
 
+### Regenerating the background-removal models
+
+```sh
+pip install torch torchvision onnx onnxruntime onnxslim onnxconverter-common einops numpy pillow
+mkdir -p weights && cd weights
+curl -LO https://github.com/ZhengPeng7/BiRefNet/releases/download/v1/BiRefNet-general-bb_swin_v1_tiny-epoch_232.pth
+curl -L -o u2netp-rembg.onnx https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx
+cd .. && python tools/bgremove/export.py --verify-dir path/to/ten/images --check-deform
+```
+
+BiRefNet's decoder uses deformable convolutions, which ONNX has no op for and
+which community exports turn into GatherND/ScatterND chains that exhaust ONNX
+Runtime Web's memory. The script rewrites each one, before tracing, as a
+GridSample per kernel tap plus a 1×1 convolution (`--check-deform` verifies the
+rewrite against torchvision), keeps shapes static, bakes normalisation and the
+sigmoid into the graph, deduplicates the initializers the backbone's two passes
+share, and stores Swin's shifted-window masks as region ids rebuilt in-graph
+instead of 17 MB of constants. It then checks the ONNX output against PyTorch
+(max alpha difference ≤ 1e-3; fp16 against fp32 by mean difference and IoU) and
+prints each file's size and sha256 for `assets/models.js`.
+
+U²-Net's authors publish `u2netp.pth` only on Google Drive. If you have it, put it
+in `weights/`; otherwise the script recovers the weights exactly from rembg's
+ONNX conversion of the same checkpoint, which folded BatchNorm into the
+convolutions, and checks the result against that graph.
+
 ### Running the smoke test
 
 ```sh
@@ -156,8 +242,12 @@ npm install
 node tools/smoke-test.mjs
 ```
 
-It serves the directory, drives headless Chromium through a real upscale on
-several models, and checks output dimensions, alpha handling and tile seams.
+It serves the directory, drives headless Chromium through real upscales and
+background removals, and checks output dimensions, alpha handling and tile
+seams; cutout IoU, edge-band alpha error and edge-colour decontamination against
+synthetic fixtures with an exact ground truth; that a repeat run is a cache hit
+and that refining never re-runs the model; remove → upscale chaining; and
+cancellation. `ONLY=upscale` or `ONLY=remove` runs one tool's cases.
 
 ## Deployment
 
@@ -166,8 +256,10 @@ repository as-is to GitHub Pages. The workflow enables Pages on first run.
 
 ## Credits and licences
 
-- Model weights: [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) by Xintao Wang et al., BSD-3-Clause,
-  and [Swin2SR](https://github.com/mv-lab/swin2sr) by Conde, Choi, Burchi and Timofte, Apache-2.0.
-  The `.onnx` files here are format conversions of those published checkpoints.
+- Model weights: [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) by Xintao Wang et al., BSD-3-Clause;
+  [Swin2SR](https://github.com/mv-lab/swin2sr) by Conde, Choi, Burchi and Timofte, Apache-2.0;
+  [BiRefNet](https://github.com/ZhengPeng7/BiRefNet) by Zheng Peng et al., MIT;
+  and [U²-Net](https://github.com/xuebinqin/U-2-Net) by Xuebin Qin et al., Apache-2.0.
+  The `.onnx` files here are format conversions of those published checkpoints (see `models/LICENSE.md`).
 - Inference: [ONNX Runtime Web](https://github.com/microsoft/onnxruntime), MIT.
 - Everything else in this repository: MIT.

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>drikus-upscale — AI image upscaling in your browser</title>
-<meta name="description" content="Upscale low-resolution and JPEG-compressed images 4× with Real-ESRGAN. Runs entirely in your browser on WebGPU or WebAssembly — nothing is uploaded.">
+<title>drikus-upscale — AI image tools in your browser</title>
+<meta name="description" content="Upscale images 4× with Real-ESRGAN and Swin2SR, or remove backgrounds with BiRefNet. Runs entirely in your browser on WebGPU or WebAssembly — nothing is uploaded.">
 <meta name="color-scheme" content="dark light">
 <link rel="stylesheet" href="assets/app.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔍</text></svg>">
@@ -16,7 +16,7 @@
     <span class="logo" aria-hidden="true">⬈</span>
     <div>
       <h1>drikus&#8209;upscale</h1>
-      <p class="tagline">Real&#8209;ESRGAN super&#8209;resolution, entirely in your browser.</p>
+      <p class="tagline">Upscaling and background removal, entirely in your browser.</p>
     </div>
   </div>
   <div class="caps" id="caps" title="Detected compute backend">
@@ -33,7 +33,7 @@
       <p class="dz-title">Drop an image here</p>
       <p class="dz-sub">or paste with <kbd id="paste-key">Ctrl</kbd><kbd>V</kbd> · <button type="button" class="linkbtn" id="browse">browse your files</button></p>
       <p class="dz-note">Your image never leaves the device — all processing happens locally.</p>
-      <p class="dz-note">Works best on a genuinely low-res or compressed source. If an image was already blown up with simple resizing before you got it, that detail is gone for good — no upscaler, ours or otherwise, can recover information a smaller image never captured.</p>
+      <p class="dz-note">Upscaling works best on a genuinely low-res or compressed source. If an image was already blown up with simple resizing before you got it, that detail is gone for good — no upscaler, ours or otherwise, can recover information a smaller image never captured.</p>
     </div>
   </section>
 
@@ -49,6 +49,11 @@
         </div>
       </div>
 
+      <div class="field">
+        <span class="field-label" id="tool-label">Tool <span class="muted">· <kbd>U</kbd> <kbd>R</kbd></span></span>
+        <div class="tool-switch" id="tool-switch" role="tablist" aria-labelledby="tool-label"></div>
+      </div>
+
       <label class="field">
         <span class="field-label">Model</span>
         <select id="model-select"></select>
@@ -57,7 +62,7 @@
       <p class="blurb" id="model-blurb"></p>
       <p class="blurb estimate" id="model-estimate"></p>
 
-      <label class="field">
+      <label class="field" data-tool="upscale">
         <span class="field-label">Output size</span>
         <select id="scale-select">
           <option value="4">4× — native model output</option>
@@ -66,6 +71,30 @@
           <option value="1">1× — clean up at original size</option>
         </select>
       </label>
+
+      <div class="tool-fields" data-tool="remove" hidden>
+        <label class="field">
+          <span class="field-label">Edge softness <span class="muted" id="radius-value"></span></span>
+          <input type="range" id="refine-radius" min="2" max="32" step="1" value="8">
+        </label>
+        <label class="field">
+          <span class="field-label">Alpha threshold <span class="muted" id="threshold-value"></span></span>
+          <input type="range" id="refine-threshold" min="0" max="0.5" step="0.01" value="0">
+        </label>
+        <label class="check">
+          <input type="checkbox" id="refine-decontaminate" checked>
+          <span>Edge cleanup <span class="muted">— removes background colour bleeding into edges</span></span>
+        </label>
+        <div class="field">
+          <span class="field-label">Background</span>
+          <div class="bg-choice">
+            <label class="check"><input type="radio" name="bg" value="transparent" checked> Transparent</label>
+            <label class="check"><input type="radio" name="bg" value="colour"> Colour</label>
+            <input type="color" id="bg-color" value="#ffffff" aria-label="Background colour">
+          </div>
+        </div>
+        <p class="blurb">These adjust the cutout live from the stored mask — no model re-run.</p>
+      </div>
 
       <details class="advanced">
         <summary>Advanced</summary>
@@ -77,16 +106,16 @@
             <option value="wasm">WebAssembly (CPU)</option>
           </select>
         </label>
-        <label class="field">
+        <label class="field" data-tool="upscale">
           <span class="field-label">Tile size <span class="muted" id="tile-value"></span></span>
           <input type="range" id="tile-size" min="64" max="512" step="32" value="192">
         </label>
-        <label class="field">
+        <label class="field" data-tool="upscale">
           <span class="field-label">Tile overlap <span class="muted" id="overlap-value"></span></span>
           <input type="range" id="overlap" min="0" max="48" step="4" value="16">
         </label>
-        <p class="blurb" id="tile-blurb">Tiles keep memory bounded. Smaller tiles are safer on phones; the overlap is cropped away after inference so seams stay invisible.</p>
-        <button type="button" class="ghost" id="clear-cache">Clear cached model downloads</button>
+        <p class="blurb" id="tile-blurb" data-tool="upscale">Tiles keep memory bounded. Smaller tiles are safer on phones; the overlap is cropped away after inference so seams stay invisible.</p>
+        <button type="button" class="ghost" id="clear-cache">Clear cached models and masks</button>
       </details>
 
       <div class="actions">
@@ -106,12 +135,15 @@
         <div class="tabs" role="tablist">
           <button type="button" class="tab active" id="tab-compare" role="tab">Compare</button>
           <button type="button" class="tab" id="tab-result" role="tab">Result</button>
+          <button type="button" class="tab" id="tab-mask" role="tab" data-tool="remove" hidden>Mask</button>
         </div>
         <div class="preview-tools">
           <span class="muted" id="out-dims"></span>
           <button type="button" class="ghost" id="zoom-toggle" title="The panel scales the image down to fit — that also scales down the detail the model just added. Switch to 100% to see actual pixels.">Fit ▾</button>
           <button type="button" class="ghost" id="download-png" disabled>Download PNG</button>
           <button type="button" class="ghost" id="download-webp" disabled>WebP</button>
+          <button type="button" class="ghost" id="download-mask" data-tool="remove" hidden disabled title="The alpha matte alone, as an 8-bit greyscale PNG">Mask PNG</button>
+          <button type="button" class="ghost" id="use-result" disabled title="Load the current result as the input image, to chain tools (for example remove the background, then upscale)">Use as input ↺</button>
         </div>
       </div>
 
@@ -119,20 +151,23 @@
         <div class="compare" id="compare">
           <canvas id="canvas-before" class="layer"></canvas>
           <div class="clip" id="clip"><canvas id="canvas-after" class="layer"></canvas></div>
-          <div class="handle" id="handle" role="slider" aria-label="Compare original and upscaled" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"><span></span></div>
+          <canvas id="canvas-mask" class="mask-layer"></canvas>
+          <div class="handle" id="handle" role="slider" aria-label="Compare original and result" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"><span></span></div>
           <span class="tag tag-left">original</span>
-          <span class="tag tag-right">upscaled</span>
+          <span class="tag tag-right" id="tag-right">upscaled</span>
         </div>
       </div>
-      <p class="hint" id="preview-hint">The upscaled image is painted tile by tile as it is produced. Drag the divider to compare — and switch to <strong>100%</strong> above the preview, since "Fit" scales the added detail back down along with the image.</p>
+      <p class="hint" id="preview-hint"></p>
     </div>
   </section>
 </main>
 
 <footer class="footer">
   <p>
-    Models are <a href="https://github.com/xinntao/Real-ESRGAN">Real&#8209;ESRGAN</a> (BSD&#8209;3&#8209;Clause) and
-    <a href="https://github.com/mv-lab/swin2sr">Swin2SR</a> (Apache&#8209;2.0), exported to ONNX;
+    Models are <a href="https://github.com/xinntao/Real-ESRGAN">Real&#8209;ESRGAN</a> (BSD&#8209;3&#8209;Clause),
+    <a href="https://github.com/mv-lab/swin2sr">Swin2SR</a> (Apache&#8209;2.0),
+    <a href="https://github.com/ZhengPeng7/BiRefNet">BiRefNet</a> (MIT) and
+    <a href="https://github.com/xuebinqin/U-2-Net">U²&#8209;Net</a> (Apache&#8209;2.0), exported to ONNX;
     inference by <a href="https://github.com/microsoft/onnxruntime">ONNX&nbsp;Runtime&nbsp;Web</a> (MIT).
     No image data is uploaded, and after the first run the app works offline.
   </p>

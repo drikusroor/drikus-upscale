@@ -21,3 +21,25 @@ and Timofte, 2022), published at
 <https://github.com/mv-lab/swin2sr/releases/tag/v0.0.1> under the Apache License
 2.0 (see `tools/swin2sr/vendor/LICENSE`). `tools/swin2sr/export.py` reproduces it
 from that checkpoint.
+
+## Background removal
+
+`birefnet-lite.fp32.onnx` (with its external-data shards
+`birefnet-lite.fp32.data0` and `.data1`) and `birefnet-lite.fp16.onnx` are ONNX
+exports of the `BiRefNet-general-bb_swin_v1_tiny-epoch_232` checkpoint
+(BiRefNet_lite) from [BiRefNet](https://github.com/ZhengPeng7/BiRefNet)
+(Zheng, Gao, Fan, Liu, Laaksonen, Ouyang and Sebe, 2024), published at
+<https://github.com/ZhengPeng7/BiRefNet/releases/tag/v1>. BiRefNet is
+Copyright (c) 2024 ZhengPeng and released under the MIT License (see
+`tools/bgremove/vendor/birefnet/LICENSE`).
+
+`u2netp.onnx` is an ONNX export of the U²-Netp checkpoint from
+[U-2-Net](https://github.com/xuebinqin/U-2-Net) (Qin, Zhang, Huang, Dehghan,
+Zaiane and Jagersand, 2020), released under the Apache License 2.0 (see
+`tools/bgremove/vendor/u2net/LICENSE`). Upstream publishes `u2netp.pth` on
+Google Drive only; the weights here were recovered exactly from
+[rembg](https://github.com/danielgatis/rembg)'s ONNX conversion of that same
+checkpoint, as `tools/bgremove/export.py` documents.
+
+`tools/bgremove/export.py` reproduces all of these files from those
+checkpoints.
