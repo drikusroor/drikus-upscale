@@ -251,10 +251,15 @@ button.primary:not(:disabled):hover { filter: brightness(1.08); }
 .compare.cutout .clip {
   background: conic-gradient(from 45deg, #cfd3da 25%, #f4f5f7 0 50%, #cfd3da 0 75%, #f4f5f7 0) 0 0 / 20px 20px;
 }
-.mask-layer { display: none; }
-.compare.mask-only .mask-layer {
-  display: block; position: absolute; inset: 0; width: 100%; height: 100%; max-width: none;
+/*
+ * Scoped under .compare so it outranks `.compare canvas { display: block }`:
+ * left in flow, this canvas (300×150 until a mask is drawn) would stretch the
+ * box, and with it the result layer, past the original underneath.
+ */
+.compare .mask-layer {
+  display: none; position: absolute; inset: 0; width: 100%; height: 100%; max-width: none;
 }
+.compare.mask-only .mask-layer { display: block; }
 .compare.mask-only .handle, .compare.mask-only .tag { display: none; }
 .tag {
   position: absolute; bottom: 8px; padding: 3px 9px; border-radius: 999px;
