@@ -143,6 +143,24 @@ async function runCase({ fixture, model, scale, tile, label, expect, expectLocke
     check(`${label}: alpha channel preserved`, stats.minAlpha === 0 && stats.maxAlpha === 255,
       `alpha range ${stats.minAlpha}..${stats.maxAlpha}`);
   }
+  await checkLayersAligned(label);
+}
+
+/** The compare slider is only useful if original and result cover the exact same box on screen. */
+async function checkLayersAligned(label) {
+  for (const zoom of ['fit', '100%']) {
+    if (zoom === '100%') await page.click('#zoom-toggle');
+    const [before, after, compare] = await page.evaluate(() => ['canvas-before', 'canvas-after', 'compare'].map((id) => {
+      const r = document.getElementById(id).getBoundingClientRect();
+      return [r.x, r.y, r.width, r.height];
+    }));
+    // Half a pixel of slack absorbs sub-pixel layout rounding of the scaled-down canvas.
+    const same = (a, b) => a.every((v, i) => Math.abs(v - b[i]) <= 0.5);
+    const fmt = (b) => b.map((v) => v.toFixed(1)).join(',');
+    check(`${label}: original and result line up (${zoom})`, same(before, after) && same(after, compare),
+      `original ${fmt(before)} · result ${fmt(after)} · box ${fmt(compare)}`);
+    if (zoom === '100%') await page.click('#zoom-toggle');
+  }
 }
 
 const only = process.env.ONLY;
